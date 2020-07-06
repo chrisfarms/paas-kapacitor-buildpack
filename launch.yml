@@ -1,0 +1,8 @@
+---
+processes:
+
+- type: kapacitor
+  command: >
+    ${KAPACITOR_ROOT}/bin/kapacitord
+    -config "${KAPACITOR_ROOT}/kapacitor.conf"
+  platforms: {cloudfoundry: {sidecar_for: [web]}}

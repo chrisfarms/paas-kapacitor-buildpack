@@ -1,0 +1,55 @@
+#!/usr/bin/env bash
+set -euo pipefail
+# https://docs.cloudfoundry.org/buildpacks/understand-buildpacks.html
+
+BUILD_DIR="${1}"
+CACHE_DIR="${2}"
+DEPS_DIR="${3}"
+DEPS_IDX="${4}"
+
+BUILDPACK_DIR=$(dirname $(readlink -f ${BASH_SOURCE%/*}))
+source ${BUILDPACK_DIR}/version.sh
+
+KAPACITOR_CHECKSUM_PATH="${CACHE_DIR}/kapacitor-${KAPACITOR_VERSION}.linux-amd64.sum"
+KAPACITOR_TAR_PATH="${CACHE_DIR}/kapacitor-${KAPACITOR_VERSION}.linux-amd64.tar.gz"
+KAPACITOR_DIR="${DEPS_DIR}/${DEPS_IDX}/kapacitor"
+echo "${KAPACITOR_SHA256} ${KAPACITOR_TAR_PATH}" > "$KAPACITOR_CHECKSUM_PATH"
+if ! sha256sum -c "$KAPACITOR_CHECKSUM_PATH" 2>/dev/null 1>/dev/null; then
+	echo "-----> downloading kapacitor: ${KAPACITOR_DOWNLOAD_URL}"
+	if curl -fLs -o "$KAPACITOR_TAR_PATH" "$KAPACITOR_DOWNLOAD_URL"; then
+		sha256sum ${KAPACITOR_TAR_PATH}
+		sha256sum -c "$KAPACITOR_CHECKSUM_PATH"
+	else
+		echo "ERROR: kapacitor version ${KAPACITOR_VERSION} not found, URL=${KAPACITOR_DOWNLOAD_URL}"
+		exit 1
+	fi
+fi
+echo "-----> installing kapacitor"
+mkdir -p "${KAPACITOR_DIR}/bin"
+mkdir -p "${KAPACITOR_DIR}/data"
+mkdir -p "${KAPACITOR_DIR}/tasks"
+mkdir -p "${KAPACITOR_DIR}/replay"
+tar -zxf "${KAPACITOR_TAR_PATH}" -C "${KAPACITOR_DIR}/bin" --strip-components 2
+ls -l ${KAPACITOR_DIR}/**/*
+mkdir -p "${BUILD_DIR}/.profile.d"
+cat <<EOF > "${BUILD_DIR}/.profile.d/0010_kapacitor.sh"
+export KAPACITOR_ROOT="/home/vcap/deps/${DEPS_IDX}/kapacitor"
+export PATH="\${KAPACITOR_ROOT}/bin:\$PATH"
+export KAPACITOR_DATA_DIR="\${KAPACITOR_ROOT}/data"
+export KAPACITOR_STORAGE_BOLTDB="\${KAPACITOR_ROOT}/data/kapacitor.db"
+export KAPACITOR_TASK_DIR="\${KAPACITOR_ROOT}/tasks"
+export KAPACITOR_REPLAY_DIR="\${KAPACITOR_ROOT}/replay"
+export KAPACITOR_LOAD_DIR="/home/vcap/app"
+export KAPACITOR_HOSTNAME="\$(echo \$VCAP_APPLICATION | jq -r '.application_name')-\${CF_INSTANCE_INDEX}"
+INFLUXDB_HOSTNAME="\$(echo \$VCAP_SERVICES | jq -r '.influxdb[0].credentials.hostname')"
+INFLUXDB_PORT="\$(echo \$VCAP_SERVICES | jq -r '.influxdb[0].credentials.port')"
+export KAPACITOR_INFLUXDB_0_URLS_0="https://\${INFLUXDB_HOSTNAME}:\${INFLUXDB_PORT}"
+export KAPACITOR_INFLUXDB_0_USERNAME="\$(echo \$VCAP_SERVICES | jq -r '.influxdb[0].credentials.username')"
+export KAPACITOR_INFLUXDB_0_PASSWORD="\$(echo \$VCAP_SERVICES | jq -r '.influxdb[0].credentials.password')"
+export KAPACITOR_INFLUXDB_0_DISABLE_SUBSCRIPTIONS="true"
+EOF
+cp "${BUILDPACK_DIR}/kapacitor.conf" "${KAPACITOR_DIR}/"
+chmod +x "${KAPACITOR_DIR}/bin/kapacitord"
+
+echo "-----> configuring sidecars"
+cp "${BUILDPACK_DIR}/launch.yml" "${DEPS_DIR}/${DEPS_IDX}/launch.yml"

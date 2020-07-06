@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+# bin/release <build-dir>
+set -e
+
+# this is a sidecar buildpack which is not expected to be used as the
+# "last" buildpack so release should never be called
+
